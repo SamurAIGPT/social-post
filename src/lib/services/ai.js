@@ -3,18 +3,21 @@ import { UserService } from "./user";
 import config, { SOCIAL_PLATFORMS, SOCIAL_TONES, LANGUAGES, LENGTHS } from "@/lib/config";
 
 export const AIService = {
-  async generateSocialPost(userId, { topic, platformId, toneId, includeEmojis, includeHashtags, language, charLength, includeTitle }) {
-    const cost = config.ai.model.creditCost; // 4 credits
+  async generateSocialPost(userId, { topic, platformId, toneId, includeEmojis, includeHashtags, language, charLength, includeTitle, customApiKey = null }) {
+    const isUsingCustomKey = Boolean(customApiKey && customApiKey.trim().length > 0);
+    const cost = isUsingCustomKey ? 0 : config.ai.model.creditCost; // 4 credits
     
-    // 1. Deduct credits first
-    await UserService.deductCredits(userId, cost);
+    // 1. Deduct credits if not using custom key
+    if (!isUsingCustomKey && cost > 0) {
+      await UserService.deductCredits(userId, cost);
+    }
 
     const platform = SOCIAL_PLATFORMS.find(p => p.id === platformId) || SOCIAL_PLATFORMS[0];
     const tone = SOCIAL_TONES.find(t => t.id === toneId) || SOCIAL_TONES[0];
     const langName = LANGUAGES.find(l => l.id === language)?.name || "English";
     const lengthDetails = LENGTHS.find(len => len.id === charLength) || LENGTHS[1];
 
-    const apiKey = config.ai.apiKey;
+    const apiKey = isUsingCustomKey ? customApiKey.trim() : config.ai.apiKey;
     if (!apiKey || apiKey.includes("your_") || apiKey.trim() === "") {
       console.warn("MU_API_KEY is not configured or invalid. Falling back to local Mock Social Post Generation.");
       // Create mock post directly
@@ -144,7 +147,7 @@ Ensure the copy is highly engaging, reads naturally, and captures the user's foc
     }
   },
 
-  async checkStatus(requestId) {
+  async checkStatus(requestId, customApiKey = null) {
     const creation = await prisma.socialPostCreation.findUnique({
       where: { requestId }
     });
@@ -158,6 +161,8 @@ Ensure the copy is highly engaging, reads naturally, and captures the user's foc
     if (creation.status === "failed") {
       return { status: "failed", error: creation.error || "Generation failed" };
     }
+
+    const isUsingCustomKey = Boolean(customApiKey && customApiKey.trim().length > 0);
 
     // Check if it's a mock request (starts with 'mock_')
     if (requestId && requestId.startsWith("mock_")) {
@@ -223,7 +228,7 @@ Ensure the copy is highly engaging, reads naturally, and captures the user's foc
       return { status: "completed", creation: updated };
     }
 
-    const apiKey = config.ai.apiKey;
+    const apiKey = (customApiKey && customApiKey.trim().length > 0) ? customApiKey.trim() : config.ai.apiKey;
     if (!apiKey) throw new Error("MU_API_KEY is not configured");
 
     try {
@@ -307,8 +312,10 @@ Ensure the copy is highly engaging, reads naturally, and captures the user's foc
           }
         });
 
-        // Refund exact credits
-        await UserService.addCredits(creation.userId, creation.creditCost);
+        // Refund exact credits if not using custom key
+        if (!isUsingCustomKey) {
+          await UserService.addCredits(creation.userId, creation.creditCost);
+        }
         return { status: "failed", error: errorMsg };
       }
     } catch (e) {
